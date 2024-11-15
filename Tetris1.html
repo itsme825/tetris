@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Tetris</title>
+    <style>
+        body { display: flex; justify-content: center; }
+        canvas { background-color: #111; margin: 10px; }
+        .game-container { display: flex; flex-direction: column; align-items: center; }
+        h2 { color: white; }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h2>Player 1 (WASD)</h2>
+        <canvas id="player1Canvas" width="300" height="600"></canvas>
+    </div>
+    <div class="game-container">
+        <h2>Player 2 (Arrow Keys)</h2>
+        <canvas id="player2Canvas" width="300" height="600"></canvas>
+    </div>
+    
+    <script>
+        // Constants and Settings
+        const BLOCK_SIZE = 30;
+        const ROWS = 20;
+        const COLS = 10;
+        const COLORS = ["#45FFCA", "#FFDDA1", "#FEFFAC", "#E68AFF", "#F1A3A3", "#FAE7FD", "#C7EAF1"];
+        const SHAPES = [
+            [[1, 1, 0], [0, 1, 1]],               // 'S' shape
+            [[0, 1, 1], [1, 1, 0]],               // 'Z' shape
+            [[1, 1, 1, 1]],                       // 'I' shape
+            [[1, 1], [1, 1]],                     // 'O' shape
+            [[1, 0, 0], [1, 1, 1]],               // 'J' shape
+            [[0, 0, 1], [1, 1, 1]],               // 'L' shape
+            [[0, 1, 0], [1, 1, 1]]                // 'T' shape
+        ];
+
+        // Draw a block on the canvas
+        function drawBlock(ctx, x, y, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        }
+
+        // Draw initial grid
+        function drawGrid(ctx) {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    drawBlock(ctx, x, y, "#111");
+                }
+            }
+        }
+
+        // Piece Class Definition
+        class Piece {
+            constructor(canvas, shape, color) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext("2d");
+                this.shape = shape;
+                this.color = color;
+                this.x = Math.floor(COLS / 2) - Math.ceil(shape[0].length / 2);
+                this.y = 0;
+            }
+
+            // Draw the piece on the grid
+            draw() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.ctx, this.x + dx, this.y + dy, this.color);
+                        }
+                    });
+                });
+            }
+
+            // Clear the piece's current position
+            clear() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.ctx, this.x + dx, this.y + dy, "#111");
+                        }
+                    });
+                });
+            }
+
+            // Move down and check for collision
+            moveDown() {
+                if (isValidMove(this, 0, 1)) {
+                    this.clear();
+                    this.y++;
+                    this.draw();
+                    return true;
+                }
+                return false;
+            }
+
+            // Move left and check for boundary
+            moveLeft() {
+                if (isValidMove(this, -1, 0)) {
+                    this.clear();
+                    this.x--;
+                    this.draw();
+                }
+            }
+
+            // Move right and check for boundary
+            moveRight() {
+                if (isValidMove(this, 1, 0)) {
+                    this.clear();
+                    this.x++;
+                    this.draw();
+                }
+            }
+
+            // Rotate the piece and check if valid; revert if not
+            rotate() {
+                const originalShape = this.shape;
+                this.shape = this.shape[0].map((_, index) =>
+                    this.shape.map(row => row[index]).reverse()
+                );
+
+                if (!isValidMove(this)) {
+                    this.shape = originalShape; // Revert if rotation is invalid
+                } else {
+                    this.clear();
+                    this.draw();
+                }
+            }
+        }
+
+        // Grid for tracking filled cells
+        let grid1 = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        let grid2 = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+        // Check if piece position is valid
+        function isValidMove(piece, offsetX = 0, offsetY = 0) {
+            const grid = piece.canvas === document.getElementById("player1Canvas") ? grid1 : grid2;
+            return piece.shape.every((row, dy) =>
+                row.every((cell, dx) => {
+                    if (!cell) return true;
+                    const x = piece.x + dx + offsetX;
+                    const y = piece.y + dy + offsetY;
+                    return y >= 0 && y < ROWS && x >= 0 && x < COLS && !grid[y][x];
+                })
+            );
+        }
+
+        // Lock the piece in the grid and clear rows if needed
+        function lockPiece(piece) {
+            const grid = piece.canvas === document.getElementById("player1Canvas") ? grid1 : grid2;
+            piece.shape.forEach((row, dy) => {
+                row.forEach((cell, dx) => {
+                    if (cell) {
+                        const x = piece.x + dx;
+                        const y = piece.y + dy;
+                        grid[y][x] = piece.color;
+                    }
+                });
+            });
+            clearRows(grid);
+        }
+
+        // Clear filled rows and update grid
+        function clearRows(grid) {
+            grid = grid.filter(row => row.some(cell => !cell));
+            while (grid.length < ROWS) {
+                grid.unshift(Array(COLS).fill(0));
+            }
+        }
+
+        let currentPiece1, currentPiece2;
+        let dropInterval = 1000;  // Time between automatic drops
+        let lastDropTime = Date.now();
+
+        // Spawn a new piece
+        function spawnPiece(player) {
+            const shapeIndex = Math.floor(Math.random() * SHAPES.length);
+            const shape = SHAPES[shapeIndex];
+            const color = COLORS[shapeIndex];
+            if (player === 1) {
+                currentPiece1 = new Piece(document.getElementById("player1Canvas"), shape, color);
+            } else {
+                currentPiece2 = new Piece(document.getElementById("player2Canvas"), shape, color);
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            const now = Date.now();
+            if (now - lastDropTime > dropInterval) {
+                if (!currentPiece1.moveDown()) {
+                    lockPiece(currentPiece1);
+                    spawnPiece(1);
+                }
+                if (!currentPiece2.moveDown()) {
+                    lockPiece(currentPiece2);
+                    spawnPiece(2);
+                }
+                lastDropTime = now;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Controls for moving and rotating the piece
+        document.addEventListener("keydown", event => {
+            if (currentPiece1) {
+                currentPiece1.clear();
+                if (event.key === "a") {
+                    currentPiece1.moveLeft();
+                } else if (event.key === "d") {
+                    currentPiece1.moveRight();
+                } else if (event.key === "s") {
+                    currentPiece1.moveDown();
+                } else if (event.key === "w") {
+                    currentPiece1.rotate();
+                }
+                currentPiece1.draw();
+            }
+
+            if (currentPiece2) {
+                currentPiece2.clear();
+                if (event.key === "j") {
+                    currentPiece2.moveLeft();
+                } else if (event.key === "l") {
+                    currentPiece2.moveRight();
+                } else if (event.key === "k") {
+                    currentPiece2.moveDown();
+                } else if (event.key === "i") {
+                    currentPiece2.rotate();
+                }
+                currentPiece2.draw();
+            }
+        });
+
+        // Start the game
+        drawGrid(document.getElementById("player1Canvas").getContext("2d"));
+        drawGrid(document.getElementById("player2Canvas").getContext("2d"));
+        spawnPiece(1);
+        spawnPiece(2);
+        gameLoop();
+    </script>
+</body>
+</html>

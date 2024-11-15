@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Tetris</title>
+
+    <!-- Sound effects -->
+    //<audio id="moveSound" src="https://www.dropbox.com/scl/fi/yn1r3ctv8pivy9bgeu2i5/mixkit-bonus-earned-in-video-game-2058.wav?rlkey=nycfse6dh4g73lzff6t9y3x0e&st=57erueje&dl=0"></audio>
+   // <audio id="rotateSound" src="https://www.dropbox.com/scl/fi/yn1r3ctv8pivy9bgeu2i5/mixkit-bonus-earned-in-video-game-2058.wav?rlkey=nycfse6dh4g73lzff6t9y3x0e&st=57erueje&dl=0"></audio>
+   // <audio id="cementSound" src="https://www.dropbox.com/scl/fi/l8gh8b0u75v5dqmh9jnt9/mixkit-retro-game-notification-212.wav?rlkey=z65e5mperzcz3oqx1a720g8el&st=vzz4hq26&dl=0"></audio>
+
+    <style>
+        canvas { background-color: #111; display: block; margin: auto; }
+    </style>
+</head>
+<body>
+    <canvas id="tetrisCanvas" width="300" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById("tetrisCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Sound elements
+        const moveSound = document.getElementById("moveSound");
+        const rotateSound = document.getElementById("rotateSound");
+        const cementSound = document.getElementById("cementSound");
+
+        // Play sound utility function
+        function playSound(sound) {
+            sound.currentTime = 0;  // Reset sound to the beginning
+            sound.play();
+        }
+
+        // Variables for dynamic background gradient
+        let gradientShift = 0;
+
+        // Function to draw dynamic gradient background
+        function drawDynamicBackground() {
+            gradientShift += 0.01;  // Adjust this value to control the speed of color change
+
+            // Create a gradient that shifts over time
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, hsl(${Math.sin(gradientShift) * 360}, 100%, 70%));
+            gradient.addColorStop(1, hsl(${(Math.sin(gradientShift + Math.PI) * 360)}, 100%, 70%));
+
+            // Fill the background with the gradient
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Constants and Settings
+        const BLOCK_SIZE = 30;
+        const ROWS = 20;
+        const COLS = 10;
+        const COLORS = ["#45FFCA", "#FFDDA1", "#FEFFAC", "#E68AFF", "#F1A3A3", "#FAE7FD", "#C7EAF1"];
+
+        // Tetris shapes
+        const SHAPES = [
+            [[1, 1, 0], [0, 1, 1]],               // 'S' shape
+            [[0, 1, 1], [1, 1, 0]],               // 'Z' shape
+            [[1, 1, 1, 1]],                       // 'I' shape
+            [[1, 1], [1, 1]],                     // 'O' shape
+            [[1, 0, 0], [1, 1, 1]],               // 'J' shape
+            [[0, 0, 1], [1, 1, 1]],               // 'L' shape
+            [[0, 1, 0], [1, 1, 1]]                // 'T' shape
+        ];
+
+        // Draw a block on the canvas
+        function drawBlock(x, y, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        }
+
+        // Draw initial grid
+        function drawGrid() {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    drawBlock(x, y, "#111");
+                }
+            }
+        }
+
+        // Piece Class Definition
+        class Piece {
+            constructor(shape, color) {
+                this.shape = shape;
+                this.color = color;
+                this.x = Math.floor(COLS / 2) - Math.ceil(shape[0].length / 2);
+                this.y = 0;
+            }
+
+            // Draw the piece on the grid
+            draw() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.x + dx, this.y + dy, this.color);
+                        }
+                    });
+                });
+            }
+
+            // Clear the piece's current position
+            clear() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.x + dx, this.y + dy, "#111");
+                        }
+                    });
+                });
+            }
+
+            // Move down and check for collision
+            moveDown() {
+                if (isValidMove(this, 0, 1)) {
+                    this.clear();
+                    this.y++;
+                    this.draw();
+                    return true;
+                }
+                return false;
+            }
+
+            // Move left and play sound
+            moveLeft() {
+                if (isValidMove(this, -1, 0)) {
+                    this.clear();
+                    this.x--;
+                    playSound(moveSound);  // Play move sound
+                    this.draw();
+                }
+            }
+
+            // Move right and play sound
+            moveRight() {
+                if (isValidMove(this, 1, 0)) {
+                    this.clear();
+                    this.x++;
+                    playSound(moveSound);  // Play move sound
+                    this.draw();
+                }
+            }
+
+            // Rotate the piece and play sound if valid
+            rotate() {
+                const originalShape = this.shape;
+                this.shape = this.shape[0].map((_, index) =>
+                    this.shape.map(row => row[index]).reverse()
+                );
+
+                if (!isValidMove(this)) {
+                    this.shape = originalShape; // Revert if rotation is invalid
+                } else {
+                    this.clear();
+                    playSound(rotateSound);  // Play rotate sound
+                    this.draw();
+                }
+            }
+        }
+
+        // Grid for tracking filled cells
+        let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+        // Check if piece position is valid
+        function isValidMove(piece, offsetX = 0, offsetY = 0) {
+            return piece.shape.every((row, dy) =>
+                row.every((cell, dx) => {
+                    if (!cell) return true;
+                    const x = piece.x + dx + offsetX;
+                    const y = piece.y + dy + offsetY;
+                    return y >= 0 && y < ROWS && x >= 0 && x < COLS && !grid[y][x];
+                })
+            );
+        }
+
+        // Lock the piece in the grid, clear rows, and play cement sound
+        function lockPiece(piece) {
+            piece.shape.forEach((row, dy) => {
+                row.forEach((cell, dx) => {
+                    if (cell) {
+                        const x = piece.x + dx;
+                        const y = piece.y + dy;
+                        grid[y][x] = piece.color;
+                    }
+                });
+            });
+            clearRows();
+            
+            // Play cement sound when a piece locks in place
+            playSound(cementSound);
+        }
+
+        // Clear filled rows and update grid
+        function clearRows() {
+            grid = grid.filter(row => row.some(cell => !cell));
+            while (grid.length < ROWS) {
+                grid.unshift(Array(COLS).fill(0));
+            }
+        }
+
+        let currentPiece;
+        let dropInterval = 1000;  // Time between automatic drops
+        let lastDropTime = Date.now();
+
+        // Spawn a new piece
+        function spawnPiece() {
+            const shapeIndex = Math.floor(Math.random() * SHAPES.length);
+            currentPiece = new Piece(SHAPES[shapeIndex], COLORS[shapeIndex]);
+        }
+
+        // Game loop
+        function gameLoop() {
+            drawDynamicBackground();  // Draw the dynamic background at the start of each loop
+            const now = Date.now();
+            if (now - lastDropTime > dropInterval) {
+                if (!currentPiece.moveDown()) {
+                    lockPiece(currentPiece);
+                    spawnPiece();
+                }
+                lastDropTime = now;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Controls for moving and rotating the piece
+        document.addEventListener("keydown", event => {
+            if (currentPiece) {
+                currentPiece.clear();
+                if (event.key === "ArrowLeft") {
+                    currentPiece.moveLeft();
+                } else if (event.key === "ArrowRight") {
+                    currentPiece.moveRight();
+                } else if (event.key === "ArrowDown") {
+                    currentPiece.moveDown();
+                } else if (event.key === "ArrowUp") {
+                    currentPiece.rotate();
+                }
+                currentPiece.draw();
+            }
+        });
+
+        // Start the game
+        drawGrid();
+        spawnPiece();
+        gameLoop();
+    </script>
+</body>
+</html>

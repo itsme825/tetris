@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Tetris</title>
+
+    <style>
+        canvas { 
+            background-color: #f6f6f6; 
+            display: block; 
+            margin: auto; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="tetrisCanvas" width="300" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById("tetrisCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Constants and Settings
+        const BLOCK_SIZE = 30;
+        const ROWS = 20;
+        const COLS = 10;
+        const COLORS = ["#45FFCA", "#FFDDA1", "#FEFFAC", "#E68AFF", "#F1A3A3", "#FAE7FD", "#C7EAF1"];
+
+        // Tetris shapes
+        const SHAPES = [
+            [[1, 1, 0], [0, 1, 1]],               // 'S' shape
+            [[0, 1, 1], [1, 1, 0]],               // 'Z' shape
+            [[1, 1, 1, 1]],                       // 'I' shape
+            [[1, 1], [1, 1]],                     // 'O' shape
+            [[1, 0, 0], [1, 1, 1]],               // 'J' shape
+            [[0, 0, 1], [1, 1, 1]],               // 'L' shape
+            [[0, 1, 0], [1, 1, 1]]                // 'T' shape
+        ];
+
+        // Draw a block on the canvas
+        function drawBlock(x, y, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        }
+
+        // Draw initial grid
+        function drawGrid() {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    drawBlock(x, y, "#111");
+                }
+            }
+        }
+
+        // Piece Class Definition
+        class Piece {
+            constructor(shape, color) {
+                this.shape = shape;
+                this.color = color;
+                this.x = Math.floor(COLS / 2) - Math.ceil(shape[0].length / 2);
+                this.y = 0;
+            }
+
+            // Draw the piece on the grid
+            draw() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.x + dx, this.y + dy, this.color);
+                        }
+                    });
+                });
+            }
+
+            // Clear the piece's current position
+            clear() {
+                this.shape.forEach((row, dy) => {
+                    row.forEach((cell, dx) => {
+                        if (cell) {
+                            drawBlock(this.x + dx, this.y + dy, "#111");
+                        }
+                    });
+                });
+            }
+
+            // Move down and check for collision
+            moveDown() {
+                if (isValidMove(this, 0, 1)) {
+                    this.clear();
+                    this.y++;
+                    this.draw();
+                    return true;
+                }
+                return false;
+            }
+
+            // Move left
+            moveLeft() {
+                if (isValidMove(this, -1, 0)) {
+                    this.clear();
+                    this.x--;
+                    this.draw();
+                }
+            }
+
+            // Move right
+            moveRight() {
+                if (isValidMove(this, 1, 0)) {
+                    this.clear();
+                    this.x++;
+                    this.draw();
+                }
+            }
+
+            // Rotate the piece if valid
+            rotate() {
+                const originalShape = this.shape;
+                this.shape = this.shape[0].map((_, index) =>
+                    this.shape.map(row => row[index]).reverse()
+                );
+
+                if (!isValidMove(this)) {
+                    this.shape = originalShape; // Revert if rotation is invalid
+                } else {
+                    this.clear();
+                    this.draw();
+                }
+            }
+        }
+
+        // Grid for tracking filled cells
+        let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+        // Check if piece position is valid
+        function isValidMove(piece, offsetX = 0, offsetY = 0) {
+            return piece.shape.every((row, dy) =>
+                row.every((cell, dx) => {
+                    if (!cell) return true;
+                    const x = piece.x + dx + offsetX;
+                    const y = piece.y + dy + offsetY;
+                    return y >= 0 && y < ROWS && x >= 0 && x < COLS && !grid[y][x];
+                })
+            );
+        }
+
+        // Lock the piece in the grid and clear rows
+        function lockPiece(piece) {
+            piece.shape.forEach((row, dy) => {
+                row.forEach((cell, dx) => {
+                    if (cell) {
+                        const x = piece.x + dx;
+                        const y = piece.y + dy;
+                        grid[y][x] = piece.color;
+                    }
+                });
+            });
+            clearRows();
+        }
+
+        // Clear filled rows and update grid
+        function clearRows() {
+            grid = grid.filter(row => row.some(cell => !cell));
+            while (grid.length < ROWS) {
+                grid.unshift(Array(COLS).fill(0));
+            }
+        }
+
+        let currentPiece;
+        let dropInterval = 1000;  // Time between automatic drops
+        let lastDropTime = Date.now();
+
+        // Spawn a new piece
+        function spawnPiece() {
+            const shapeIndex = Math.floor(Math.random() * SHAPES.length);
+            currentPiece = new Piece(SHAPES[shapeIndex], COLORS[shapeIndex]);
+        }
+
+        // Game loop
+        function gameLoop() {
+            // Draw static background color
+            ctx.fillStyle = "#2d2d2d"; // Background color
+            ctx.fillRect(0, 0, canvas.width, canvas.height); // Fill the canvas with color
+
+            const now = Date.now();
+            if (now - lastDropTime > dropInterval) {
+                if (!currentPiece.moveDown()) {
+                    lockPiece(currentPiece);
+                    spawnPiece();
+                }
+                lastDropTime = now;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Controls for moving and rotating the piece
+        document.addEventListener("keydown", event => {
+            if (currentPiece) {
+                currentPiece.clear();
+                if (event.key === "ArrowLeft") {
+                    currentPiece.moveLeft();
+                } else if (event.key === "ArrowRight") {
+                    currentPiece.moveRight();
+                } else if (event.key === "ArrowDown") {
+                    currentPiece.moveDown();
+                } else if (event.key === "ArrowUp") {
+                    currentPiece.rotate();
+                }
+                currentPiece.draw();
+            }
+        });
+
+        // Start the game
+        drawGrid();
+        spawnPiece();
+        gameLoop();
+    </script>
+</body>
+</html>
